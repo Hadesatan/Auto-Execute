@@ -1,66 +1,85 @@
-name: Rename -> Fork -> Delete Old Repo
+name: 批量Fork + 重命名 + 自动清理n天前仓库
 on:
   schedule:
-    # UTC 0点 = 北京时间 8点，自行调整 cron
-    - cron: '0 1 * * *'
-  workflow_dispatch: # 支持手动立即执行
+    - cron: '0 1 * * *'  # UTC 0点 = 北京时间 8点
+  workflow_dispatch:
 
 jobs:
-  task:
+  batch_fork:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}
-      # ========= 此处务必修改为你自己的信息 =========
-      UPSTREAM_REPO: LiBwrt/LibWrt
-      MY_USER: Hadesatan
+      GH_PAT: ${{ secrets.GH_PAT }}
+      MY_USER: Hadesatan  # 替换成你自己的账号
     steps:
-      - name: 提取仓库名 & 获取北京时间日期
+      - name: 计算日期（北京时间）
         run: |
-          # 北京时间 年月日 格式: 20260614
           TODAY=$(TZ='Asia/Shanghai' date +%Y%m%d)
+          N_DAYS_AGO=$(TZ='Asia/Shanghai' date -d "-1 days" +%Y%m%d)
           echo "TODAY=$TODAY" >> $GITHUB_ENV
+          echo "N_DAYS_AGO=$N_DAYS_AGO" >> $GITHUB_ENV
 
-          # 截取上游仓库名
-          BASE_REPO=$(echo $UPSTREAM_REPO | cut -d/ -f2)
-          echo "BASE_REPO=$BASE_REPO" >> $GITHUB_ENV
-
-          # 旧仓库重命名后的名称
-          OLD_REPO="${BASE_REPO}_${TODAY}"
-          echo "OLD_REPO=$OLD_REPO" >> $GITHUB_ENV
-
-      - name: 检测并重命名现有仓库
+      - name: 批量执行 Fork 流程
         run: |
-          # 检测同名仓库是否存在
-          RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token $GH_TOKEN" \
-            https://api.github.com/repos/$MY_USER/$BASE_REPO)
+          # ========= 在这里添加所有需要 Fork 的上游仓库 =========
+          UPSTREAM_LIST=(
+            "LiBwrt/LibWrt"
+            "immortalwrt/immortalwrt"
+            "immortalwrt/packages"
+            "immortalwrt/luci"
+          )
 
-          if [ "$RESP_CODE" = "200" ]; then
-            echo "发现旧仓库 $BASE_REPO，开始重命名为 $OLD_REPO"
-            # 调用API重命名仓库
-            curl -X PATCH \
-              -H "Authorization: token $GH_TOKEN" \
+          # 遍历列表逐个处理
+          for UP_REPO in "${UPSTREAM_LIST[@]}"; do
+            # 提取纯仓库名
+            BASE=$(echo $UP_REPO | cut -d/ -f2)
+            RENAMED="${BASE}_${TODAY}"
+            echo "====================================="
+            echo "正在处理：$UP_REPO"
+
+            # 1. 检测并重命名现有仓库
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token $GH_PAT" \
+              https://api.github.com/repos/$MY_USER/$BASE)
+
+            if [ "$CODE" = "200" ]; then
+              echo "重命名 $BASE  →  $RENAMED"
+              curl -X PATCH \
+                -H "Authorization: token $GH_PAT" \
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/repos/$MY_USER/$BASE \
+                -d "{\"name\":\"$RENAMED\"}"
+            else
+              echo "仓库 $BASE 不存在，跳过重命名"
+            fi
+
+            # 2. 执行 Fork
+            echo "开始 Fork $UP_REPO"
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
               -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/$MY_USER/$BASE_REPO \
-              -d "{\"name\":\"$OLD_REPO\"}"
-          else
-            echo "仓库 $BASE_REPO 不存在，跳过重命名"
-          fi
+              https://api.github.com/repos/$UP_REPO/forks
 
-      - name: Fork 上游仓库（生成全新同名仓库）
-        run: |
-          echo "开始 Fork 上游仓库: $UPSTREAM_REPO"
-          curl -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/$UPSTREAM_REPO/forks
+            sleep 5  # 短暂延时，防止API请求过快
+          done
 
-      - name: 删除已重命名的旧仓库
+      - name: 统一清理N天前的归档仓库
         run: |
-          # 等待30秒确保重命名生效
-          sleep 30
-          echo "准备删除旧仓库: $OLD_REPO"
-          curl -X DELETE \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/$MY_USER/$OLD_REPO
+          echo "===== 开始清理早于 ${N_DAYS_AGO} 的仓库 ====="
+          # 获取当前账号所有仓库
+          ALL_REPOS=$(curl -s \
+            -H "Authorization: token $GH_PAT" \
+            https://api.github.com/users/$MY_USER/repos?per_page=100 | jq -r '.[].name')
+
+          # 遍历删除过期仓库（匹配 仓库名_8位日期 格式）
+          while IFS= read -r repo; do
+            if [[ $repo == *_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9] ]]; then
+              repo_date=${repo: -8}
+              if [[ "$repo_date" -lt "$N_DAYS_AGO" ]]; then
+                echo "删除过期仓库：$repo"
+                curl -X DELETE \
+                  -H "Authorization: token $GH_PAT" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  https://api.github.com/repos/$MY_USER/$repo
+              fi
+            fi
+          done <<< "$ALL_REPOS"
