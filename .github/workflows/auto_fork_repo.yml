@@ -9,7 +9,7 @@ jobs:
   task:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${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}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
       # ========= 此处务必修改为你自己的信息 =========
       UPSTREAM_REPO: LiBwrt/LibWrt
       MY_USER: Hadesatan
