@@ -20,8 +20,8 @@ jobs:
         run: |
           # 在这里填写所有需要fork的仓库，格式 "作者/仓库名"
           UPSTREAM_LIST=(
-            "L"
-            "xxx/your-repo"
+            "LiBwrt/LibWrt"
+            "immortalwrt/immortalwrt"
           )
 
           for UP in "${UPSTREAM_LIST[@]}"; do
@@ -42,7 +42,7 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 https://api.github.com/repos/$MY_GITHUB_USER/$REPO_NAME \
                 -d "{\"name\":\"$ARCHIVE_NAME\"}"
-              sleep 1
+              sleep 5
             else
               echo "仓库 $REPO_NAME 不存在，跳过重命名"
             fi
@@ -53,7 +53,7 @@ jobs:
               -H "Authorization: token $GH_PAT" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/$UP/forks
-            sleep 2
+            sleep 5
 
             # 3. 删除归档旧仓库
              echo "删除归档旧仓库：$ARCHIVE_NAME"
@@ -61,5 +61,5 @@ jobs:
                 -H "Authorization: token $GH_PAT" \
                 -H "Accept: application/vnd.github.v3+json" \
                 https://api.github.com/repos/$MY_GITHUB_USER/$ARCHIVE_NAME
-              sleep 1
+              sleep 5
           done
