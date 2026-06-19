@@ -2,7 +2,7 @@ name: 每日批量Fork，重命名旧库并删除所有归档仓库
 on:
   schedule:
     - cron: '50 23 * * *' # UTC 0点 = 北京时间早上8点执行
-  workflow_dispatch # 支持手动一键运行
+  workflow_dispatch: # 支持手动一键运行
 
 jobs:
   fork_task:
