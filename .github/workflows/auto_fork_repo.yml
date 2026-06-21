@@ -35,9 +35,7 @@ jobs:
             OLD_REPO="${BASE_REPO}_${TODAY}"
             echo "OLD_REPO=$OLD_REPO" >> $GITHUB_ENV
 
-      - name: 检测并重命名现有仓库 "$BASE_REPO"
-        run: |
-          # 检测同名仓库是否存在
+            # 检测同名仓库是否存在
             RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: token $GH_TOKEN" \
               https://api.github.com/repos/$MY_USER/$BASE_REPO)
@@ -54,17 +52,13 @@ jobs:
               echo "仓库 $BASE_REPO 不存在，跳过重命名"
             fi
 
-      - name: Fork 上游仓库（生成全新同名仓库）
-        run: |
             echo "开始 Fork 上游仓库: $UPSTREAM_REPO"
             curl -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/$UPSTREAM_REPO/forks
 
-      - name: 删除已重命名的旧仓库
-        run: |
-          # 等待30秒确保重命名生效
+            # 等待30秒确保重命名生效
             sleep 30
             echo "准备删除旧仓库: $OLD_REPO"
             curl -X DELETE \
