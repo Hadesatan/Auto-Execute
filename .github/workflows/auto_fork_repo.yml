@@ -37,14 +37,14 @@ jobs:
 
             # 1. 检测仓库是否存在（使用 /repos 接口，空仓库也会返回 200）
             REPO_EXISTS=false
-            RESP=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$MY_USER/$BASE_REPO")
+            RESP=$(curl -sL -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$MY_USER/$BASE_REPO")
             if [ "$RESP" = "200" ]; then
-              REPO_EXISTS=true
-              echo "✅ 仓库 $BASE_REPO 已存在"
+            REPO_EXISTS=true
+            echo "✅ 仓库 $BASE_REPO 已存在（可能经过重定向）"
             else
-              echo "⚠️ 仓库 $BASE_REPO 不存在（HTTP $RESP）"
+            echo "⚠️ 仓库 $BASE_REPO 不存在（HTTP $RESP）"
             fi
 
             # 2. 如果存在，先重命名（保留旧版本）
