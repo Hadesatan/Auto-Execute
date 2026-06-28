@@ -83,6 +83,7 @@ jobs:
             # 获取新仓库的 URL（Fork 是异步的，但响应中包含仓库信息）
             NEW_REPO_URL=$(echo "$FORK_RESP" | jq -r '.html_url')
             echo "✅ Fork 已启动: $NEW_REPO_URL"
+            echo "📦 Fork UPSTREAM_REPO:$UPSTREAM_REPO, BASE_REPO:$BASE_REPO"
 
             echo "===== $UPSTREAM_REPO 处理完成 ====="
             sleep 5
