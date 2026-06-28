@@ -36,12 +36,12 @@ jobs:
             echo "OLD_REPO=$OLD_REPO" >> $GITHUB_ENV
 
             # 检测同名仓库是否存在
-            RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Authorization: token $GH_TOKEN" \
-              https://api.github.com/repos/$MY_USER/$BASE_REPO)
-            sleep 30
-
-            if [ "$RESP_CODE" = "200" ]; then
+            RESP_CODE=$(curl --write-out "%{http_code}" --silent --output /dev/null \
+            "https://api.github.com/repos/$MY_USER/$BASE_REPO/contents")
+            echo "API response code: $RESP_CODE"
+            sleep 5
+      
+            if [ $RESP_CODE -eq 200 ]; then
               echo "发现旧仓库 $BASE_REPO，开始重命名为 $OLD_REPO"
               # 调用API重命名仓库
               curl -X PATCH \
@@ -49,7 +49,7 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 https://api.github.com/repos/$MY_USER/$BASE_REPO \
                 -d "{\"name\":\"$OLD_REPO\"}"
-              sleep 60
+              sleep 5
             else
               echo "仓库 $BASE_REPO 不存在，跳过重命名"
             fi
@@ -59,11 +59,12 @@ jobs:
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/$UPSTREAM_REPO/forks
-            sleep 30
+            sleep 5
+            
             echo "准备删除旧仓库: $OLD_REPO"
             curl -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/$MY_USER/$OLD_REPO
-            sleep 30
+            sleep 5
           done
