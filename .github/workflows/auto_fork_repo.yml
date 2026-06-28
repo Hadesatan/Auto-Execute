@@ -67,23 +67,33 @@ jobs:
 
             # 3. Fork 上游仓库
             echo "📦 Fork $UPSTREAM_REPO -> $MY_USER/$BASE_REPO"
-            FORK_RESP=$(curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$UPSTREAM_REPO/forks")
-            
-            # 检查 Fork 是否立即报错（如已存在同名仓库）
-            if echo "$FORK_RESP" | grep -q '"message":'; then
-              ERROR_MSG=$(echo "$FORK_RESP" | jq -r '.message')
-              echo "❌ Fork 失败: $ERROR_MSG"
-              # 如果 Fork 失败是因为仓库已存在，可能重命名未生效，尝试恢复原名？
-              exit 1
+            FORK_RESP=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$UPSTREAM_REPO/forks")
+
+            # 分离响应体和状态码
+            HTTP_BODY=$(echo "$FORK_RESP" | head -n -1)
+            HTTP_STATUS=$(echo "$FORK_RESP" | tail -n 1)
+
+            echo "Fork HTTP Status: $HTTP_STATUS"
+            echo "Fork Response Body: $HTTP_BODY"   # 打印完整响应，方便排错
+
+            # 检查状态码（成功为 202，部分情况下可能是 201）
+            if [ "$HTTP_STATUS" != "202" ] && [ "$HTTP_STATUS" != "201" ]; then
+            ERROR_MSG=$(echo "$HTTP_BODY" | jq -r '.message // "未知错误"')
+            echo "❌ Fork 失败 (HTTP $HTTP_STATUS): $ERROR_MSG"
+            exit 1
             fi
 
-            # 获取新仓库的 URL（Fork 是异步的，但响应中包含仓库信息）
-            NEW_REPO_URL=$(echo "$FORK_RESP" | jq -r '.html_url')
-            echo "✅ Fork 已启动: $NEW_REPO_URL"
-            echo "📦 Fork UPSTREAM_REPO:$UPSTREAM_REPO, BASE_REPO:$BASE_REPO"
+            # 提取新仓库的完整名称（如 "Hadesatan/LibWrt"）
+            NEW_FULL_NAME=$(echo "$HTTP_BODY" | jq -r '.full_name')
+            if [ "$NEW_FULL_NAME" != "$MY_USER/$BASE_REPO" ]; then
+            echo "❌ Fork 返回的仓库名异常: $NEW_FULL_NAME，期望: $MY_USER/$BASE_REPO"
+            exit 1
+            fi
+            NEW_REPO_URL=$(echo "$HTTP_BODY" | jq -r '.html_url')
+            echo "✅ Fork 成功: $NEW_REPO_URL"
 
             echo "===== $UPSTREAM_REPO 处理完成 ====="
             sleep 5
