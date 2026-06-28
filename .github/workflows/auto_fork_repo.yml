@@ -1,70 +1,122 @@
 name: Rename -> Fork -> Delete Old Repo
 on:
   schedule:
-    # UTC 0点 = 北京时间 8点，自行调整 cron
     - cron: '0 23 * * *'
-  workflow_dispatch: # 支持手动立即执行
+  workflow_dispatch:
 
 jobs:
   task:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}  # ========= 此处务必修改为你自己的信息 =========
-      # UPSTREAM_REPO: LiBwrt/LibWrt
+      GH_TOKEN: ${{ secrets.GH_PAT }}
       MY_USER: Hadesatan
     steps:
       - name: 获取北京时间日期
         run: |
-          # 北京时间 年月日 格式: 20260614
           TODAY=$(TZ='Asia/Shanghai' date +%Y%m%d)
           echo "TODAY=$TODAY" >> $GITHUB_ENV
 
-      - name: 提取仓库名
+      - name: 处理每个上游仓库
+        env:
+          GH_TOKEN: ${{ env.GH_TOKEN }}
+          MY_USER: ${{ env.MY_USER }}
+          TODAY: ${{ env.TODAY }}
         run: |
+          set -e  # 遇到错误立即退出
           UPSTREAM_LIST=(
             "LiBwrt/LibWrt"
             "immortalwrt/immortalwrt"
             "immortalwrt/packages"
             "immortalwrt/luci"
           )
-          for UPSTREAM_REPO in "${UPSTREAM_LIST[@]}"; do # 截取上游仓库名
-            BASE_REPO=$(echo $UPSTREAM_REPO | cut -d/ -f2)
-            echo "BASE_REPO=$BASE_REPO" >> $GITHUB_ENV
 
-            # 旧仓库重命名后的名称
+          for UPSTREAM_REPO in "${UPSTREAM_LIST[@]}"; do
+            echo "===== 处理 $UPSTREAM_REPO ====="
+            BASE_REPO=$(echo "$UPSTREAM_REPO" | cut -d/ -f2)
             OLD_REPO="${BASE_REPO}_${TODAY}"
-            echo "OLD_REPO=$OLD_REPO" >> $GITHUB_ENV
 
-            # 检测同名仓库是否存在
-            RESP_CODE=$(curl --write-out "%{http_code}" --silent --output /dev/null \
-            "https://api.github.com/repos/$MY_USER/$BASE_REPO/contents")
-            echo "API response code: $RESP_CODE"
-            sleep 5
-      
-            if [ $RESP_CODE -eq 200 ]; then
-              echo "发现旧仓库 $BASE_REPO，开始重命名为 $OLD_REPO"
-              # 调用API重命名仓库
-              curl -X PATCH \
-                -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                https://api.github.com/repos/$MY_USER/$BASE_REPO \
-                -d "{\"name\":\"$OLD_REPO\"}"
-              sleep 5
+            # 1. 检测仓库是否存在（使用 /repos 接口，空仓库也会返回 200）
+            REPO_EXISTS=false
+            RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$MY_USER/$BASE_REPO")
+            if [ "$RESP" = "200" ]; then
+              REPO_EXISTS=true
+              echo "✅ 仓库 $BASE_REPO 已存在"
             else
-              echo "仓库 $BASE_REPO 不存在，跳过重命名"
+              echo "⚠️ 仓库 $BASE_REPO 不存在（HTTP $RESP）"
             fi
 
-            echo "开始 Fork 上游仓库: $UPSTREAM_REPO"
-            curl -X POST \
+            # 2. 如果存在，先重命名（保留旧版本）
+            if [ "$REPO_EXISTS" = true ]; then
+              echo "🔄 重命名 $BASE_REPO -> $OLD_REPO"
+              RENAME_RESP=$(curl -s -X PATCH \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$MY_USER/$BASE_REPO" \
+                -d "{\"name\":\"$OLD_REPO\"}")
+              # 检查是否成功
+              if echo "$RENAME_RESP" | grep -q '"name":'; then
+                echo "✅ 重命名成功"
+              else
+                echo "❌ 重命名失败: $RENAME_RESP"
+                exit 1
+              fi
+              # 等待 GitHub 同步（重要）
+              sleep 10
+            fi
+
+            # 3. Fork 上游仓库
+            echo "📦 Fork $UPSTREAM_REPO -> $MY_USER/$BASE_REPO"
+            FORK_RESP=$(curl -s -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/$UPSTREAM_REPO/forks
-            sleep 5
+              "https://api.github.com/repos/$UPSTREAM_REPO/forks")
             
-            echo "准备删除旧仓库: $OLD_REPO"
-            curl -X DELETE \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/$MY_USER/$OLD_REPO
+            # 检查 Fork 是否立即报错（如已存在同名仓库）
+            if echo "$FORK_RESP" | grep -q '"message":'; then
+              ERROR_MSG=$(echo "$FORK_RESP" | jq -r '.message')
+              echo "❌ Fork 失败: $ERROR_MSG"
+              # 如果 Fork 失败是因为仓库已存在，可能重命名未生效，尝试恢复原名？
+              exit 1
+            fi
+
+            # 获取新仓库的 URL（Fork 是异步的，但响应中包含仓库信息）
+            NEW_REPO_URL=$(echo "$FORK_RESP" | jq -r '.html_url')
+            echo "✅ Fork 已启动: $NEW_REPO_URL"
+
+            # 等待 Fork 完成（轮询检查仓库是否可访问）
+            echo "⏳ 等待 Fork 完成..."
+            for i in {1..30}; do
+              sleep 5
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/$MY_USER/$BASE_REPO")
+              if [ "$STATUS" = "200" ]; then
+                echo "✅ Fork 已完成"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ Fork 超时未完成"
+                exit 1
+              fi
+            done
+
+            # 4. 删除重命名的旧仓库（仅当之前重命名过）
+            if [ "$REPO_EXISTS" = true ]; then
+              echo "🗑️ 删除旧仓库 $OLD_REPO"
+              DEL_RESP=$(curl -s -X DELETE \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$MY_USER/$OLD_REPO")
+              # DELETE 成功时返回 204，无内容
+              if [ $? -eq 0 ]; then
+                echo "✅ 旧仓库已删除"
+              else
+                echo "⚠️ 删除旧仓库可能失败，请检查"
+              fi
+            fi
+
+            echo "===== $UPSTREAM_REPO 处理完成 ====="
             sleep 5
           done
