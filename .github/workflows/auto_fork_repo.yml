@@ -1,18 +1,18 @@
 name: Daily Fork Sync Upstream
 run-name: 每日上游仓库 Fork 更新检测
 on:
-  # 每日北京时间凌晨2点执行
   schedule:
     - cron: '0 18 * * *'
-  # 支持手动触发调试
   workflow_dispatch:
 
 env:
   GH_TOKEN: ${{ secrets.GH_TOKEN }}
-  # 你的 GitHub 用户名（替换成自己）
-  MY_USER: Hadesatan
-  # 上游仓库列表文件路径
+  MY_USER: Hadesatan  # 替换为你的GitHub用户名
   UPSTREAM_FILE: ./upstreams.txt
+
+# 操作仓库、删除fork必须开启写入权限
+permissions:
+  contents: write
 
 jobs:
   sync-fork:
@@ -25,47 +25,37 @@ jobs:
         run: |
           sudo apt update
           sudo apt install gh -y
+          # 使用token静默登录，避免网页验证超时报错
           gh auth login --with-token $GH_TOKEN
 
       - name: 遍历所有上游仓库执行同步逻辑
         run: |
-          # 循环读取上游仓库列表
           while IFS= read -r upstream; do
-            # 跳过空行
             [[ -z "$upstream" ]] && continue
             echo "==================== 处理上游仓库: $upstream ===================="
             
-            # 拆分上游 owner / repo 名称
             UP_OWNER=$(echo "$upstream" | cut -d'/' -f1)
             UP_REPO=$(echo "$upstream" | cut -d'/' -f2)
             LOCAL_REPO="$MY_USER/$UP_REPO"
 
-            # 1. 判断本地是否存在同名仓库
             if gh repo view "$LOCAL_REPO" >/dev/null 2>&1; then
-              echo "本地仓库 $LOCAL_REPO 已存在，开始对比上游更新"
-
-              # 获取上游最新提交哈希
+              echo "本地仓库 $LOCAL_REPO 已存在，对比上游更新"
+              # 已修改为 master 分支
               UP_LATEST=$(gh api repos/$upstream/commits/master -q .sha)
-              # 获取本地 fork 仓库 main 分支最新提交哈希
               LOCAL_LATEST=$(gh api repos/$LOCAL_REPO/commits/master -q .sha 2>/dev/null || echo "null")
 
               echo "上游最新commit: $UP_LATEST"
               echo "本地fork最新commit: $LOCAL_LATEST"
 
-              # 2. 对比哈希，不一致则删除旧仓库重新fork
               if [[ "$UP_LATEST" != "$LOCAL_LATEST" ]]; then
-                echo "检测到上游更新，删除旧仓库并重新Fork"
+                echo "检测到更新，删除旧仓库重新Fork"
                 gh repo delete "$LOCAL_REPO" --yes
-                sleep 10
                 gh repo fork "$upstream" --clone=false
-                sleep 10
               else
-                echo "上游无更新，跳过操作"
+                echo "上游无更新，跳过"
               fi
             else
-              # 3. 本地无仓库，首次创建Fork
-              echo "本地不存在仓库 $UP_REPO，首次Fork创建"
+              echo "本地无仓库，首次Fork创建"
               gh repo fork "$upstream" --clone=false
             fi
-
           done < "$UPSTREAM_FILE"
