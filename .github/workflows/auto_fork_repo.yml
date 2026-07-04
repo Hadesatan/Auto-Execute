@@ -45,9 +45,9 @@ jobs:
               echo "本地仓库 $LOCAL_REPO 已存在，开始对比上游更新"
 
               # 获取上游最新提交哈希
-              UP_LATEST=$(gh api repos/$upstream/commits/main -q .sha)
+              UP_LATEST=$(gh api repos/$upstream/commits/master -q .sha)
               # 获取本地 fork 仓库 main 分支最新提交哈希
-              LOCAL_LATEST=$(gh api repos/$LOCAL_REPO/commits/main -q .sha 2>/dev/null || echo "null")
+              LOCAL_LATEST=$(gh api repos/$LOCAL_REPO/commits/master -q .sha 2>/dev/null || echo "null")
 
               echo "上游最新commit: $UP_LATEST"
               echo "本地fork最新commit: $LOCAL_LATEST"
