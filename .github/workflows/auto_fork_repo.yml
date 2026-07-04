@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  GH_TOKEN: ${{ secrets.GH_PAT }}
   MY_USER: Hadesatan  # 替换为你的GitHub用户名
   UPSTREAM_FILE: ./upstreams.txt
 
