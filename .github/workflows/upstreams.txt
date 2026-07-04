@@ -1,3 +1,0 @@
-LiBwrt/LibWrt
-immortalwrt/packages
-immortalwrt/luci
