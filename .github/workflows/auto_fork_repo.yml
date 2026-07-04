@@ -1,89 +1,71 @@
-- name: 处理每个上游仓库
-  env:
-    GH_TOKEN: ${{ env.GH_TOKEN }}
-    MY_USER: ${{ env.MY_USER }}
-    TODAY: ${{ env.TODAY }}
-  run: |
-    set -e
-    UPSTREAM_LIST=(
-      "LiBwrt/LibWrt"
-      "immortalwrt/immortalwrt"
-      "immortalwrt/packages"
-      "immortalwrt/luci"
-    )
+name: Daily Fork Sync Upstream
+run-name: 每日上游仓库 Fork 更新检测
+on:
+  # 每日北京时间凌晨2点执行
+  schedule:
+    - cron: '0 18 * * *'
+  # 支持手动触发调试
+  workflow_dispatch:
 
-    for UPSTREAM_REPO in "${UPSTREAM_LIST[@]}"; do
-      echo "===== 处理 $UPSTREAM_REPO ====="
-      BASE_REPO=$(echo "$UPSTREAM_REPO" | cut -d/ -f2)
-      OLD_REPO="${BASE_REPO}_${TODAY}"
+env:
+  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  # 你的 GitHub 用户名（替换成自己）
+  MY_USER: Hadesatan
+  # 上游仓库列表文件路径
+  UPSTREAM_FILE: ./upstreams.txt
 
-      # 1. 检测仓库是否存在（跟随重定向）
-      REPO_EXISTS=false
-      RESP=$(curl -sL -o /dev/null -w "%{http_code}" \
-        -H "Authorization: token $GH_TOKEN" \
-        "https://api.github.com/repos/$MY_USER/$BASE_REPO")
-      if [ "$RESP" = "200" ]; then
-        REPO_EXISTS=true
-        echo "✅ 仓库 $BASE_REPO 已存在"
-      else
-        echo "⚠️ 仓库 $BASE_REPO 不存在（HTTP $RESP）"
-      fi
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取当前仓库配置
+        uses: actions/checkout@v4
 
-      # 2. 如果存在，重命名为旧备份
-      if [ "$REPO_EXISTS" = true ]; then
-        echo "🔄 重命名 $BASE_REPO -> $OLD_REPO"
-        RENAME_RESP=$(curl -s -X PATCH \
-          -H "Authorization: token $GH_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/$MY_USER/$BASE_REPO" \
-          -d "{\"name\":\"$OLD_REPO\"}")
-        if echo "$RENAME_RESP" | grep -q '"name":'; then
-          echo "✅ 重命名成功"
-        else
-          echo "❌ 重命名失败: $RENAME_RESP"
-          exit 1
-        fi
-        sleep 10
-      fi
+      - name: 安装 gh 命令行工具
+        run: |
+          sudo apt update
+          sudo apt install gh -y
+          gh auth login --with-token $GH_TOKEN
 
-      # 3. Fork 上游仓库
-      echo "📦 Fork $UPSTREAM_REPO -> $MY_USER/$BASE_REPO"
-      FORK_RESP=$(curl -s -w "\n%{http_code}" -X POST \
-        -H "Authorization: token $GH_TOKEN" \
-        -H "Accept: application/vnd.github.v3+json" \
-        "https://api.github.com/repos/$UPSTREAM_REPO/forks")
+      - name: 遍历所有上游仓库执行同步逻辑
+        run: |
+          # 循环读取上游仓库列表
+          while IFS= read -r upstream; do
+            # 跳过空行
+            [[ -z "$upstream" ]] && continue
+            echo "==================== 处理上游仓库: $upstream ===================="
+            
+            # 拆分上游 owner / repo 名称
+            UP_OWNER=$(echo "$upstream" | cut -d'/' -f1)
+            UP_REPO=$(echo "$upstream" | cut -d'/' -f2)
+            LOCAL_REPO="$MY_USER/$UP_REPO"
 
-      HTTP_BODY=$(echo "$FORK_RESP" | head -n -1)
-      HTTP_STATUS=$(echo "$FORK_RESP" | tail -n 1)
+            # 1. 判断本地是否存在同名仓库
+            if gh repo view "$LOCAL_REPO" >/dev/null 2>&1; then
+              echo "本地仓库 $LOCAL_REPO 已存在，开始对比上游更新"
 
-      echo "Fork HTTP Status: $HTTP_STATUS"
-      echo "Fork Response Body: $HTTP_BODY"
+              # 获取上游最新提交哈希
+              UP_LATEST=$(gh api repos/$upstream/commits/main -q .sha)
+              # 获取本地 fork 仓库 main 分支最新提交哈希
+              LOCAL_LATEST=$(gh api repos/$LOCAL_REPO/commits/main -q .sha 2>/dev/null || echo "null")
 
-      if [ "$HTTP_STATUS" != "202" ] && [ "$HTTP_STATUS" != "201" ]; then
-        ERROR_MSG=$(echo "$HTTP_BODY" | jq -r '.message // "未知错误"')
-        echo "❌ Fork 失败 (HTTP $HTTP_STATUS): $ERROR_MSG"
-        exit 1
-      fi
+              echo "上游最新commit: $UP_LATEST"
+              echo "本地fork最新commit: $LOCAL_LATEST"
 
-      # 提取新仓库名，校验是否与期望一致
-      NEW_FULL_NAME=$(echo "$HTTP_BODY" | jq -r '.full_name')
-      if [ "$NEW_FULL_NAME" != "$MY_USER/$BASE_REPO" ]; then
-        echo "❌ Fork 返回的仓库名异常: $NEW_FULL_NAME，期望: $MY_USER/$BASE_REPO"
-        echo "提示：可能因为同名仓库未重命名成功，或 GitHub 自动添加了后缀。"
-        exit 1
-      fi
+              # 2. 对比哈希，不一致则删除旧仓库重新fork
+              if [[ "$UP_LATEST" != "$LOCAL_LATEST" ]]; then
+                echo "检测到上游更新，删除旧仓库并重新Fork"
+                gh repo delete "$LOCAL_REPO" --yes
+                sleep 10
+                gh repo fork "$upstream" --clone=false
+                sleep 10
+              else
+                echo "上游无更新，跳过操作"
+              fi
+            else
+              # 3. 本地无仓库，首次创建Fork
+              echo "本地不存在仓库 $UP_REPO，首次Fork创建"
+              gh repo fork "$upstream" --clone=false
+            fi
 
-      NEW_REPO_URL=$(echo "$HTTP_BODY" | jq -r '.html_url')
-      echo "✅ Fork 成功: $NEW_REPO_URL"
-
-      # 4. 安全删除旧备份（只有 Fork 成功后执行）
-      echo "🗑️ 删除旧备份: $OLD_REPO"
-      curl -s -X DELETE \
-        -H "Authorization: token $GH_TOKEN" \
-        -H "Accept: application/vnd.github.v3+json" \
-        "https://api.github.com/repos/$MY_USER/$OLD_REPO"
-      echo "✅ 清理完成"
-
-      echo "===== $UPSTREAM_REPO 处理完成 ====="
-      sleep 5
-    done
+          done < "$UPSTREAM_FILE"
