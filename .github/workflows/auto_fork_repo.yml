@@ -1,61 +1,91 @@
-name: Daily Fork Sync Upstream
-run-name: 每日上游仓库 Fork 更新检测
+name: Sync Upstream Repositories
+
 on:
+  # 每天 UTC 00:00 执行（北京时间 08:00）
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 0 * * *'
+  # 支持手动触发
   workflow_dispatch:
 
-env:
-  GH_TOKEN: ${{ secrets.GH_PAT }}
-  MY_USER: Hadesatan  # 替换为你的GitHub用户名
-  UPSTREAM_FILE: ./upstreams.txt
-
-# 操作仓库、删除fork必须开启写入权限
-permissions:
-  contents: write
-
 jobs:
-  sync-fork:
+  sync-repos:
     runs-on: ubuntu-latest
+    # 定义多个上游仓库
+    strategy:
+      fail-fast: false
+      matrix:
+        upstream:
+          # 格式: "owner/repo"
+          - "Libwrt/LiBwrt"
     steps:
-      - name: 拉取当前仓库配置
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 安装 gh 命令行工具
+      - name: Install GitHub CLI
         run: |
-          sudo apt update
-          sudo apt install gh -y
-          # 使用token静默登录，避免网页验证超时报错
-          gh auth login --with-token $GH_TOKEN
+          type -p curl >/dev/null || sudo apt update && sudo apt install curl -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update && sudo apt install gh -y
 
-      - name: 遍历所有上游仓库执行同步逻辑
+      - name: Sync Upstream Repository
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          UPSTREAM: ${{ matrix.upstream }}
+          # 当前 GitHub 用户名/组织名，根据实际情况修改
+          TARGET_OWNER: "Hadesatan"
         run: |
-          while IFS= read -r upstream; do
-            [[ -z "$upstream" ]] && continue
-            echo "==================== 处理上游仓库: $upstream ===================="
-            
-            UP_OWNER=$(echo "$upstream" | cut -d'/' -f1)
-            UP_REPO=$(echo "$upstream" | cut -d'/' -f2)
-            LOCAL_REPO="$MY_USER/$UP_REPO"
+          set -e
 
-            if gh repo view "$LOCAL_REPO" >/dev/null 2>&1; then
-              echo "本地仓库 $LOCAL_REPO 已存在，对比上游更新"
-              # 已修改为 master 分支
-              UP_LATEST=$(gh api repos/$upstream/commits/master -q .sha)
-              LOCAL_LATEST=$(gh api repos/$LOCAL_REPO/commits/master -q .sha 2>/dev/null || echo "null")
+          echo "=== Processing upstream: $UPSTREAM ==="
+          REPO_NAME="${UPSTREAM#*/}"
+          TARGET_REPO="$TARGET_OWNER/$REPO_NAME"
 
-              echo "上游最新commit: $UP_LATEST"
-              echo "本地fork最新commit: $LOCAL_LATEST"
+          # 1. 检查本地是否存在同名仓库
+          if gh repo view "$TARGET_REPO" &>/dev/null; then
+            echo "Repository $TARGET_REPO already exists."
+            EXISTS=true
+          else
+            echo "Repository $TARGET_REPO does not exist. Creating fork..."
+            EXISTS=false
+          fi
 
-              if [[ "$UP_LATEST" != "$LOCAL_LATEST" ]]; then
-                echo "检测到更新，删除旧仓库重新Fork"
-                gh repo delete "$LOCAL_REPO" --yes
-                gh repo fork "$upstream" --clone=false
-              else
-                echo "上游无更新，跳过"
-              fi
-            else
-              echo "本地无仓库，首次Fork创建"
-              gh repo fork "$upstream" --clone=false
-            fi
-          done < "$UPSTREAM_FILE"
+          # 2. 如果不存在，直接 fork
+          if [ "$EXISTS" = false ]; then
+            echo "First-time creation: forking $UPSTREAM -> $TARGET_REPO"
+            gh repo fork "$UPSTREAM" --clone=false --remote=false
+            echo "✅ Fork created successfully."
+            exit 0
+          fi
+
+          # 3. 如果存在，检查是否有更新
+          echo "Checking for updates in $UPSTREAM ..."
+
+          # 获取上游最新 commit hash（使用 GitHub API 更可靠）
+          UPSTREAM_SHA=$(gh api repos/$UPSTREAM/commits/main --jq '.sha' 2>/dev/null || gh api repos/$UPSTREAM/commits/master --jq '.sha')
+          TARGET_SHA=$(gh api repos/$TARGET_REPO/commits/main --jq '.sha' 2>/dev/null || gh api repos/$TARGET_REPO/commits/master --jq '.sha')
+
+          echo "Upstream SHA: $UPSTREAM_SHA"
+          echo "Target SHA:   $TARGET_SHA"
+
+          if [ "$UPSTREAM_SHA" = "$TARGET_SHA" ]; then
+            echo "✅ No new updates. Skipping."
+            exit 0
+          fi
+
+          # 4. 有更新：删除旧仓库，重新 fork
+          echo "🔄 Updates detected! Recreating fork..."
+
+          # 删除旧仓库（需要 administration:write 权限）
+          echo "Deleting old repository: $TARGET_REPO"
+          gh repo delete "$TARGET_REPO" --yes
+
+          # 等待删除完成（GitHub 可能需要几秒处理）
+          sleep 5
+
+          # 重新 fork
+          echo "Creating fresh fork: $UPSTREAM -> $TARGET_REPO"
+          gh repo fork "$UPSTREAM" --clone=false --remote=false
+
+          echo "✅ Fresh fork created successfully."
