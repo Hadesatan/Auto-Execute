@@ -54,7 +54,7 @@ jobs:
           # 2. 如果不存在，直接 fork
           if [ "$EXISTS" = false ]; then
             echo "First-time creation: forking $UPSTREAM -> $TARGET_REPO"
-            gh repo fork "$UPSTREAM" --clone=false --remote=false
+            gh repo fork "$UPSTREAM"
             echo "✅ Fork created successfully."
             exit 0
           fi
@@ -76,13 +76,9 @@ jobs:
 
           # 4. 有更新：删除旧仓库，重新 fork
           echo "🔄 Updates detected! Recreating fork..."
-
-          # 删除旧仓库（需要 administration:write 权限）
-          echo "Deleting old repository: $TARGET_REPO"
           gh repo delete "$TARGET_REPO" --yes
-
-          # 等待删除完成（GitHub 可能需要几秒处理）
           sleep 5
+          gh repo fork "$UPSTREAM"
 
           # 重新 fork
           echo "Creating fresh fork: $UPSTREAM -> $TARGET_REPO"
