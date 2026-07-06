@@ -62,9 +62,12 @@ jobs:
           # 3. 如果存在，检查是否有更新
           echo "Checking for updates in $UPSTREAM ..."
 
-          # 获取上游最新 commit hash（使用 GitHub API 更可靠）
-          UPSTREAM_SHA=$(gh api repos/$UPSTREAM/commits/main --jq '.sha' 2>/dev/null || gh api repos/$UPSTREAM/commits/master --jq '.sha')
-          TARGET_SHA=$(gh api repos/$TARGET_REPO/commits/main --jq '.sha' 2>/dev/null || gh api repos/$TARGET_REPO/commits/master --jq '.sha')
+          # 动态获取默认分支
+          UPSTREAM_BRANCH=$(gh api repos/$UPSTREAM --jq '.default_branch')
+          TARGET_BRANCH=$(gh api repos/$TARGET_REPO --jq '.default_branch')
+
+          UPSTREAM_SHA=$(gh api repos/$UPSTREAM/commits/$UPSTREAM_BRANCH --jq '.sha')
+          TARGET_SHA=$(gh api repos/$TARGET_REPO/commits/$TARGET_BRANCH --jq '.sha')
 
           echo "Upstream SHA: $UPSTREAM_SHA"
           echo "Target SHA:   $TARGET_SHA"
