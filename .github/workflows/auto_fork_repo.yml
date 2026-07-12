@@ -17,6 +17,10 @@ jobs:
         upstream:
           # 格式: "owner/repo"
           - "LiBwrt/LibWrt"
+          - "immortalwrt/luci"
+          - "immortalwrt/packages"
+          
+          
     steps:
       - name: Checkout
         uses: actions/checkout@v4
