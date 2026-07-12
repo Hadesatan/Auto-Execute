@@ -86,9 +86,4 @@ jobs:
           gh repo delete "$TARGET_REPO" --yes
           sleep 5
           gh repo fork "$UPSTREAM"
-
-          # 重新 fork
-          echo "Creating fresh fork: $UPSTREAM -> $TARGET_REPO"
-          gh repo fork "$UPSTREAM" --clone=false --remote=false
-
-          echo "✅ Fresh fork created successfully."
+          echo "✅ Fresh fork created."
