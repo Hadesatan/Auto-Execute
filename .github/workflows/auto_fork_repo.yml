@@ -19,7 +19,7 @@ jobs:
           - "LiBwrt/LibWrt"
           - "immortalwrt/luci"
           - "immortalwrt/packages"
-          
+          - "immortalwrt/immortalwrt"
           
     steps:
       - name: Checkout
